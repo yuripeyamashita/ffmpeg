@@ -1,0 +1,97 @@
+
+name: Build FFmpeg for OpenWrt ARM64
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Build FFmpeg
+        shell: bash
+        run: |
+          mkdir -p dist
+
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD/dist:/out" \
+            alpine:3.22 sh -euxc '
+              apk add --no-cache \
+                build-base \
+                linux-headers \
+                pkgconf \
+                opus-dev \
+                binutils \
+                curl \
+                tar \
+                xz
+
+              cd /tmp
+
+              curl -fL --retry 3 \
+                https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz \
+                -o ffmpeg.tar.xz
+
+              tar -xJf ffmpeg.tar.xz
+              cd ffmpeg-9.0.2
+
+              ./configure \
+                --prefix=/usr/local \
+                --enable-static \
+                --disable-shared \
+                --disable-autodetect \
+                --disable-doc \
+                --disable-debug \
+                --disable-ffplay \
+                --disable-ffprobe \
+                --enable-pthreads \
+                --enable-network \
+                --enable-libopus \
+                --enable-decoder=h264 \
+                --enable-decoder=h264_v4l2m2m \
+                --enable-encoder=mjpeg \
+                --enable-parser=h264 \
+                --pkg-config-flags=--static \
+                --extra-ldflags=-static
+
+              make -j$(nproc)
+
+              ./ffmpeg -hide_banner -decoders | grep h264
+              ./ffmpeg -hide_banner -encoders | grep mjpeg
+              ./ffmpeg -hide_banner -encoders | grep libopus
+              ./ffmpeg -hide_banner -demuxers | grep rtsp
+
+              if readelf -l ./ffmpeg | grep -q INTERP; then
+                echo "ERROR: dynamic interpreter found"
+                exit 1
+              fi
+
+              if readelf -d ./ffmpeg | grep -q NEEDED; then
+                echo "ERROR: dynamic libraries required"
+                exit 1
+              fi
+
+              ./ffmpeg -hide_banner -version
+
+              cp ffmpeg /out/ffmpeg
+              chmod 755 /out/ffmpeg
+            '
+
+      - name: Verify ARM64 binary
+        run: |
+          file dist/ffmpeg
+          readelf -h dist/ffmpeg | grep Machine
+          ls -lh dist/ffmpeg
+          ./dist/ffmpeg -hide_banner -version
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-openwrt-arm64
+          path: dist/ffmpeg
+          if-no-files-found: error
+          retention-days: 30
