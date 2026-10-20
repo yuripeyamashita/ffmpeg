@@ -1,5 +1,5 @@
 
-name: Build FFmpeg for OpenWrt ARM64
+name: Build FFmpeg ARM64 Static
 
 on:
   workflow_dispatch:
@@ -12,8 +12,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
 
     steps:
-      - name: Build FFmpeg
-        shell: bash
+      - name: Build FFmpeg with musl
         run: |
           mkdir -p dist
 
@@ -24,14 +23,37 @@ jobs:
                 build-base \
                 linux-headers \
                 pkgconf \
-                opus-dev \
                 binutils \
                 curl \
                 tar \
                 xz
 
+              # Build static Opus
               cd /tmp
+              curl -fL --retry 3 \
+                https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz \
+                -o opus.tar.gz
 
+              tar -xzf opus.tar.gz
+              cd opus-1.5.2
+
+              ./configure \
+                --prefix=/opt/static \
+                --enable-static \
+                --disable-shared
+
+              make -j"$(nproc)"
+              make install
+
+              test -f /opt/static/lib/libopus.a
+
+              export PKG_CONFIG_PATH=/opt/static/lib/pkgconfig
+              export PKG_CONFIG_LIBDIR=/opt/static/lib/pkgconfig
+
+              pkg-config --modversion opus
+
+              # Build FFmpeg
+              cd /tmp
               curl -fL --retry 3 \
                 https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz \
                 -o ffmpeg.tar.xz
@@ -40,7 +62,6 @@ jobs:
               cd ffmpeg-9.0.2
 
               ./configure \
-                --prefix=/usr/local \
                 --enable-static \
                 --disable-shared \
                 --disable-autodetect \
@@ -48,34 +69,36 @@ jobs:
                 --disable-debug \
                 --disable-ffplay \
                 --disable-ffprobe \
-                --enable-pthreads \
                 --enable-network \
+                --enable-pthreads \
                 --enable-libopus \
                 --enable-decoder=h264 \
                 --enable-decoder=h264_v4l2m2m \
                 --enable-encoder=mjpeg \
                 --enable-parser=h264 \
                 --pkg-config-flags=--static \
-                --extra-ldflags=-static
+                --extra-cflags="-I/opt/static/include" \
+                --extra-ldflags="-static -L/opt/static/lib"
 
-              make -j$(nproc)
+              make -j"$(nproc)"
 
+              # Verify required capabilities
               ./ffmpeg -hide_banner -decoders | grep h264
+              ./ffmpeg -hide_banner -decoders | grep h264_v4l2m2m
               ./ffmpeg -hide_banner -encoders | grep mjpeg
               ./ffmpeg -hide_banner -encoders | grep libopus
               ./ffmpeg -hide_banner -demuxers | grep rtsp
 
+              # Verify fully static binary
               if readelf -l ./ffmpeg | grep -q INTERP; then
-                echo "ERROR: dynamic interpreter found"
+                echo "ERROR: Dynamic loader detected"
                 exit 1
               fi
 
               if readelf -d ./ffmpeg | grep -q NEEDED; then
-                echo "ERROR: dynamic libraries required"
+                echo "ERROR: Dynamic library detected"
                 exit 1
               fi
-
-              ./ffmpeg -hide_banner -version
 
               cp ffmpeg /out/ffmpeg
               chmod 755 /out/ffmpeg
@@ -84,14 +107,14 @@ jobs:
       - name: Verify ARM64 binary
         run: |
           file dist/ffmpeg
-          readelf -h dist/ffmpeg | grep Machine
+          readelf -h dist/ffmpeg | grep AArch64
           ls -lh dist/ffmpeg
           ./dist/ffmpeg -hide_banner -version
 
-      - name: Upload artifact
+      - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: ffmpeg-openwrt-arm64
+          name: ffmpeg-openwrt-arm64-musl
           path: dist/ffmpeg
-          if-no-files-found: error
           retention-days: 30
+          if-no-files-found: error
