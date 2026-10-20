@@ -1,5 +1,5 @@
 
-name: Build FFmpeg ARM64 Static
+name: Build FFmpeg ARM64 Minimal Static
 
 on:
   workflow_dispatch:
@@ -12,7 +12,8 @@ jobs:
     runs-on: ubuntu-24.04-arm
 
     steps:
-      - name: Build FFmpeg with musl
+      - name: Build FFmpeg
+        shell: bash
         run: |
           mkdir -p dist
 
@@ -28,8 +29,9 @@ jobs:
                 tar \
                 xz
 
-              # Build static Opus
+              # Static Opus
               cd /tmp
+
               curl -fL --retry 3 \
                 https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz \
                 -o opus.tar.gz
@@ -50,10 +52,9 @@ jobs:
               export PKG_CONFIG_PATH=/opt/static/lib/pkgconfig
               export PKG_CONFIG_LIBDIR=/opt/static/lib/pkgconfig
 
-              pkg-config --modversion opus
-
-              # Build FFmpeg
+              # FFmpeg
               cd /tmp
+
               curl -fL --retry 3 \
                 https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz \
                 -o ffmpeg.tar.xz
@@ -64,57 +65,99 @@ jobs:
               ./configure \
                 --enable-static \
                 --disable-shared \
-                --disable-autodetect \
+                --disable-everything \
                 --disable-doc \
                 --disable-debug \
                 --disable-ffplay \
                 --disable-ffprobe \
+                --disable-avdevice \
                 --enable-network \
                 --enable-pthreads \
                 --enable-libopus \
                 --enable-decoder=h264 \
                 --enable-decoder=h264_v4l2m2m \
+                --enable-decoder=aac \
+                --enable-decoder=opus \
+                --enable-decoder=pcm_alaw \
+                --enable-decoder=pcm_mulaw \
                 --enable-encoder=mjpeg \
+                --enable-encoder=libopus \
                 --enable-parser=h264 \
+                --enable-parser=aac \
+                --enable-demuxer=rtsp \
+                --enable-demuxer=rtp \
+                --enable-demuxer=sdp \
+                --enable-demuxer=h264 \
+                --enable-muxer=image2 \
+                --enable-muxer=image2pipe \
+                --enable-muxer=rtsp \
+                --enable-muxer=rtp \
+                --enable-muxer=ogg \
+                --enable-muxer=null \
+                --enable-protocol=file \
+                --enable-protocol=pipe \
+                --enable-protocol=tcp \
+                --enable-protocol=udp \
+                --enable-protocol=rtp \
+                --enable-filter=scale \
+                --enable-filter=fps \
+                --enable-filter=format \
+                --enable-filter=aresample \
+                --enable-filter=aformat \
+                --enable-filter=anull \
+                --enable-filter=null \
                 --pkg-config-flags=--static \
                 --extra-cflags="-I/opt/static/include" \
                 --extra-ldflags="-static -L/opt/static/lib"
 
               make -j"$(nproc)"
 
-              # Verify required capabilities
-              ./ffmpeg -hide_banner -decoders | grep h264
-              ./ffmpeg -hide_banner -decoders | grep h264_v4l2m2m
-              ./ffmpeg -hide_banner -encoders | grep mjpeg
-              ./ffmpeg -hide_banner -encoders | grep libopus
-              ./ffmpeg -hide_banner -demuxers | grep rtsp
+              # Verify required codecs
+              ./ffmpeg -hide_banner -decoders > /tmp/decoders.txt
+              ./ffmpeg -hide_banner -encoders > /tmp/encoders.txt
+              ./ffmpeg -hide_banner -demuxers > /tmp/demuxers.txt
 
-              # Verify fully static binary
-              if readelf -l ./ffmpeg | grep -q INTERP; then
-                echo "ERROR: Dynamic loader detected"
+              grep -E "^[[:space:]]*V[^[:space:]]*[[:space:]]+h264[[:space:]]" /tmp/decoders.txt
+              grep -E "^[[:space:]]*V[^[:space:]]*[[:space:]]+h264_v4l2m2m[[:space:]]" /tmp/decoders.txt
+              grep -E "^[[:space:]]*V[^[:space:]]*[[:space:]]+mjpeg[[:space:]]" /tmp/encoders.txt
+              grep -E "^[[:space:]]*A[^[:space:]]*[[:space:]]+libopus[[:space:]]" /tmp/encoders.txt
+              grep -E "^[[:space:]]*D[[:space:]]+rtsp[[:space:]]" /tmp/demuxers.txt
+
+              # Verify unwanted decoders are absent
+              if grep -E "^[[:space:]]*V[^[:space:]]*[[:space:]]+(vvc|rv60|vc1|vp9)[[:space:]]" /tmp/decoders.txt; then
+                echo "ERROR: Unwanted decoder found"
                 exit 1
               fi
 
-              if readelf -d ./ffmpeg | grep -q NEEDED; then
-                echo "ERROR: Dynamic library detected"
+              # Verify ARM64 musl static linking
+              readelf -h ffmpeg | grep AArch64
+
+              if readelf -l ffmpeg | grep -q INTERP; then
+                echo "ERROR: Dynamic interpreter found"
                 exit 1
               fi
+
+              if readelf -d ffmpeg | grep -q NEEDED; then
+                echo "ERROR: Dynamic dependencies found"
+                exit 1
+              fi
+
+              ./ffmpeg -hide_banner -version
 
               cp ffmpeg /out/ffmpeg
               chmod 755 /out/ffmpeg
             '
 
-      - name: Verify ARM64 binary
+      - name: Verify artifact
         run: |
           file dist/ffmpeg
-          readelf -h dist/ffmpeg | grep AArch64
           ls -lh dist/ffmpeg
           ./dist/ffmpeg -hide_banner -version
 
-      - name: Upload binary
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ffmpeg-openwrt-arm64-musl
+          name: ffmpeg-openwrt-arm64-minimal
           path: dist/ffmpeg
           retention-days: 30
           if-no-files-found: error
