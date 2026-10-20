@@ -76,7 +76,7 @@ jobs:
                 --enable-pthreads \
                 --enable-libopus \
                 --enable-decoder=h264,h264_v4l2m2m,hevc,mjpeg \
-                --enable-decoder=aac,opus,pcm_alaw,pcm_mulaw,pcm_s16le,pcm_s16be \
+                --enable-decoder=aac,opus,pcm_alaw,pcm_mulaw,pcm_s16le,pcm_s16be,mp3float \
                 --enable-encoder=h264_v4l2m2m,mjpeg,rawvideo \
                 --enable-encoder=aac,libopus,pcm_alaw,pcm_mulaw,pcm_s16le,pcm_s16be \
                 --enable-parser=h264,hevc,aac,mjpeg,opus \
@@ -84,7 +84,8 @@ jobs:
                 --enable-demuxer=mov,mpegts,flv,mp3,aac,ogg,wav,mjpeg,image2 \
                 --enable-muxer=rtsp,rtp,mpegts,flv,mp4,null \
                 --enable-muxer=image2,image2pipe,mjpeg,yuv4mpegpipe,adts,wav,ogg \
-                --enable-protocol=file,pipe,tcp,udp,rtp,http,httpproxy \
+                --enable-muxer=alaw,mulaw \
+                --enable-protocol=file,pipe,tcp,udp,rtp,http,httpproxy,fd \
                 --enable-filter=scale,fps,format,transpose,crop \
                 --enable-filter=aresample,aformat,anull,null,volume \
                 --pkg-config-flags=--static \
