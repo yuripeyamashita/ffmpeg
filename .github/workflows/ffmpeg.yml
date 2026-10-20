@@ -84,7 +84,7 @@ jobs:
                 --enable-demuxer=mov,mpegts,flv,mp3,aac,ogg,wav,mjpeg,image2 \
                 --enable-muxer=rtsp,rtp,mpegts,flv,mp4,null \
                 --enable-muxer=image2,image2pipe,mjpeg,yuv4mpegpipe,adts,wav,ogg \
-                --enable-muxer=alaw,mulaw \
+                --enable-muxer=pcm_alaw,pcm_mulaw \
                 --enable-protocol=file,pipe,tcp,udp,rtp,http,httpproxy,fd \
                 --enable-filter=scale,fps,format,transpose,crop \
                 --enable-filter=aresample,aformat,anull,null,volume \
