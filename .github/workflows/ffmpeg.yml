@@ -1,5 +1,5 @@
 
-name: Build FFmpeg ARM64 Minimal Static
+name: Build FFmpeg ARM64 Hardware First
 
 on:
   workflow_dispatch:
@@ -15,6 +15,7 @@ jobs:
       - name: Build FFmpeg
         shell: bash
         run: |
+          set -e
           mkdir -p dist
 
           docker run --rm --platform linux/arm64 \
@@ -29,7 +30,7 @@ jobs:
                 tar \
                 xz
 
-              # Static Opus
+              # Build static Opus
               cd /tmp
 
               curl -fL --retry 3 \
@@ -52,7 +53,7 @@ jobs:
               export PKG_CONFIG_PATH=/opt/static/lib/pkgconfig
               export PKG_CONFIG_LIBDIR=/opt/static/lib/pkgconfig
 
-              # FFmpeg
+              # Build FFmpeg
               cd /tmp
 
               curl -fL --retry 3 \
@@ -74,71 +75,66 @@ jobs:
                 --enable-network \
                 --enable-pthreads \
                 --enable-libopus \
-                --enable-decoder=h264 \
-                --enable-decoder=h264_v4l2m2m \
-                --enable-decoder=aac \
-                --enable-decoder=opus \
-                --enable-decoder=pcm_alaw \
-                --enable-decoder=pcm_mulaw \
-                --enable-encoder=mjpeg \
-                --enable-encoder=libopus \
-                --enable-parser=h264 \
-                --enable-parser=aac \
-                --enable-demuxer=rtsp \
-                --enable-demuxer=rtp \
-                --enable-demuxer=sdp \
-                --enable-demuxer=h264 \
-                --enable-muxer=image2 \
-                --enable-muxer=image2pipe \
-                --enable-muxer=rtsp \
-                --enable-muxer=rtp \
-                --enable-muxer=ogg \
-                --enable-muxer=null \
-                --enable-protocol=file \
-                --enable-protocol=pipe \
-                --enable-protocol=tcp \
-                --enable-protocol=udp \
-                --enable-protocol=rtp \
-                --enable-filter=scale \
-                --enable-filter=fps \
-                --enable-filter=format \
-                --enable-filter=aresample \
-                --enable-filter=aformat \
-                --enable-filter=anull \
-                --enable-filter=null \
+                --enable-decoder=h264,h264_v4l2m2m,hevc,mjpeg \
+                --enable-decoder=aac,opus,pcm_alaw,pcm_mulaw,pcm_s16le,pcm_s16be \
+                --enable-encoder=h264_v4l2m2m,mjpeg,rawvideo \
+                --enable-encoder=aac,libopus,pcm_alaw,pcm_mulaw,pcm_s16le,pcm_s16be \
+                --enable-parser=h264,hevc,aac,mjpeg,opus \
+                --enable-demuxer=rtsp,rtp,sdp,h264,hevc \
+                --enable-demuxer=mov,mpegts,flv,mp3,aac,ogg,wav,mjpeg,image2 \
+                --enable-muxer=rtsp,rtp,mpegts,flv,mp4,null \
+                --enable-muxer=image2,image2pipe,mjpeg,yuv4mpegpipe,adts,wav,ogg \
+                --enable-protocol=file,pipe,tcp,udp,rtp,http,httpproxy \
+                --enable-filter=scale,fps,format,transpose,crop \
+                --enable-filter=aresample,aformat,anull,null,volume \
                 --pkg-config-flags=--static \
                 --extra-cflags="-I/opt/static/include" \
                 --extra-ldflags="-static -L/opt/static/lib"
 
               make -j"$(nproc)"
 
-              # Verify required codecs
+              # Validate essential decoders
               ./ffmpeg -hide_banner -decoders > /tmp/decoders.txt
               ./ffmpeg -hide_banner -encoders > /tmp/encoders.txt
+              ./ffmpeg -hide_banner -muxers > /tmp/muxers.txt
               ./ffmpeg -hide_banner -demuxers > /tmp/demuxers.txt
+              ./ffmpeg -hide_banner -protocols > /tmp/protocols.txt
+              ./ffmpeg -hide_banner -filters > /tmp/filters.txt
 
-              grep -E "^[[:space:]]*V[^[:space:]]*[[:space:]]+h264[[:space:]]" /tmp/decoders.txt
-              grep -E "^[[:space:]]*V[^[:space:]]*[[:space:]]+h264_v4l2m2m[[:space:]]" /tmp/decoders.txt
-              grep -E "^[[:space:]]*V[^[:space:]]*[[:space:]]+mjpeg[[:space:]]" /tmp/encoders.txt
-              grep -E "^[[:space:]]*A[^[:space:]]*[[:space:]]+libopus[[:space:]]" /tmp/encoders.txt
-              grep -E "^[[:space:]]*D[[:space:]]+rtsp[[:space:]]" /tmp/demuxers.txt
+              for codec in h264 h264_v4l2m2m hevc mjpeg aac opus pcm_alaw pcm_mulaw; do
+                grep -Eq "^[[:space:]]*[^[:space:]]+[[:space:]]+$codec[[:space:]]" /tmp/decoders.txt
+              done
 
-              # Verify unwanted decoders are absent
-              if grep -E "^[[:space:]]*V[^[:space:]]*[[:space:]]+(vvc|rv60|vc1|vp9)[[:space:]]" /tmp/decoders.txt; then
-                echo "ERROR: Unwanted decoder found"
+              for codec in h264_v4l2m2m mjpeg aac libopus pcm_alaw pcm_mulaw; do
+                grep -Eq "^[[:space:]]*[^[:space:]]+[[:space:]]+$codec[[:space:]]" /tmp/encoders.txt
+              done
+
+              for format in rtsp rtp image2pipe mjpeg adts wav; do
+                grep -Eq "^[[:space:]]*E[[:space:]]+$format[[:space:]]" /tmp/muxers.txt
+              done
+
+              grep -Eq "^[[:space:]]*D[[:space:]]+rtsp[[:space:]]" /tmp/demuxers.txt
+
+              for filter in scale fps format aresample transpose; do
+                grep -Eq "^[[:space:]]*[^[:space:]]+[[:space:]]+$filter[[:space:]]" /tmp/filters.txt
+              done
+
+              # Confirm unwanted software encoders are absent
+              if grep -Eq "^[[:space:]]*[^[:space:]]+[[:space:]]+(libx264|libx265)[[:space:]]" /tmp/encoders.txt; then
+                echo "ERROR: Unwanted software encoder found"
                 exit 1
               fi
 
-              # Verify ARM64 musl static linking
+              # Confirm target architecture and static linkage
               readelf -h ffmpeg | grep AArch64
 
               if readelf -l ffmpeg | grep -q INTERP; then
-                echo "ERROR: Dynamic interpreter found"
+                echo "ERROR: Dynamic interpreter detected"
                 exit 1
               fi
 
               if readelf -d ffmpeg | grep -q NEEDED; then
-                echo "ERROR: Dynamic dependencies found"
+                echo "ERROR: Dynamic dependencies detected"
                 exit 1
               fi
 
@@ -148,16 +144,17 @@ jobs:
               chmod 755 /out/ffmpeg
             '
 
-      - name: Verify artifact
+      - name: Verify ARM64 binary
         run: |
           file dist/ffmpeg
+          readelf -h dist/ffmpeg | grep AArch64
           ls -lh dist/ffmpeg
           ./dist/ffmpeg -hide_banner -version
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ffmpeg-openwrt-arm64-minimal
+          name: ffmpeg-openwrt-arm64-hardware
           path: dist/ffmpeg
           retention-days: 30
           if-no-files-found: error
